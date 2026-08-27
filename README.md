@@ -64,6 +64,41 @@ create it with `sdk.dir=/path/to/Android/sdk`.
 ./gradlew :app:assembleDebug
 ```
 
+### Installing on a phone
+
+Android refuses to install an unsigned APK, and the phone reports this only as a generic
+"can't install app on your device". A release build therefore needs a signing key.
+
+The key is **not** in this repo. Create one once:
+
+```sh
+keytool -genkeypair -v \
+  -keystore ~/.android/keystores/life-insights-release.jks \
+  -alias life-insights -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Then create `keystore.properties` in the repo root (gitignored):
+
+```properties
+storeFile=/Users/you/.android/keystores/life-insights-release.jks
+storePassword=...
+keyAlias=life-insights
+keyPassword=...
+```
+
+```sh
+./gradlew :app:assembleRelease
+adb install app/build/outputs/apk/release/app-release.apk
+```
+
+Without `keystore.properties` the release build still succeeds but produces an unsigned APK that
+will not install. `assembleDebug` always installs, because it is signed with the SDK's debug key.
+
+> **Back up the keystore.** Android ties app data to the signing key. Signing a later version with a
+> different key means the update cannot be installed over the existing app: you would have to
+> uninstall first, which deletes every check-in on the device. For an app whose entire value is
+> months of accumulated history, losing this file is the most expensive mistake available.
+
 Debug builds have a **Seed demo data** button in Settings. It writes 120 days of synthetic history
 whose true structure is known - sleep two nights earlier drives energy, weekends lift mood, alcohol
 lowers next-day energy, and screen time is deliberately unrelated to anything - so the Insights
