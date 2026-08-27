@@ -84,6 +84,9 @@ interface DailyMetricDao {
     @Query("SELECT * FROM daily_metric WHERE localDate = :epochDay")
     fun observeForDay(epochDay: Long): Flow<DailyMetricEntity?>
 
+    @Query("SELECT * FROM daily_metric WHERE localDate = :epochDay")
+    suspend fun find(epochDay: Long): DailyMetricEntity?
+
     @Upsert
     suspend fun upsert(metric: DailyMetricEntity)
 

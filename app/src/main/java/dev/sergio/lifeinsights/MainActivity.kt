@@ -114,10 +114,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun rememberViewModelFactory(app: LifeInsightsApp): ViewModelProvider.Factory =
     viewModelFactory {
-        initializer { CheckInViewModel(app.repository) }
+        initializer { CheckInViewModel(app.repository, app.usageStatsSource) }
         initializer { TrendsViewModel(app.repository) }
         initializer { InsightsViewModel(app.repository, app.insightsEngine) }
-        initializer { SettingsViewModel(app.repository, app.settings, app.exporter, app.database) }
+        initializer {
+            SettingsViewModel(
+                app.repository, app.settings, app.exporter, app.database,
+                app.usageStatsSource, app.usageRepository,
+            )
+        }
     }
 
 @Composable

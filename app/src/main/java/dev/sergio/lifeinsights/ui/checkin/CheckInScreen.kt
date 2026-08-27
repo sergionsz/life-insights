@@ -32,7 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.Button
+import androidx.compose.ui.platform.LocalContext
 import dev.sergio.lifeinsights.data.Scale
+import dev.sergio.lifeinsights.data.db.SleepSource
 import dev.sergio.lifeinsights.data.db.CheckInWithTags
 import dev.sergio.lifeinsights.data.db.DailyMetricEntity
 import java.time.format.DateTimeFormatter
@@ -41,6 +44,13 @@ import java.time.format.DateTimeFormatter
 fun CheckInScreen(viewModel: CheckInViewModel, modifier: Modifier = Modifier) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val form by viewModel.form.collectAsStateWithLifecycle()
+    val usageAccessGranted by viewModel.usageAccessGranted.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.refreshUsageAccess()
+        onPauseOrDispose { }
+    }
 
     Column(
         modifier
@@ -128,6 +138,10 @@ fun CheckInScreen(viewModel: CheckInViewModel, modifier: Modifier = Modifier) {
         }
 
         Spacer(Modifier.height(28.dp))
+        if (!usageAccessGranted) {
+            UsageAccessCard(onGrant = { context.startActivity(viewModel.usageAccessSettingsIntent()) })
+            Spacer(Modifier.height(16.dp))
+        }
         AutoCollectedCard(state.metrics)
         Spacer(Modifier.height(24.dp))
     }
@@ -226,6 +240,34 @@ private fun EntryRow(entry: CheckInWithTags, onEdit: () -> Unit, onDelete: () ->
     }
 }
 
+/**
+ * Usage access cannot be requested with a normal permission dialog, so this explains what the app
+ * wants and why before sending the user into a Settings screen that would otherwise be baffling.
+ */
+@Composable
+private fun UsageAccessCard(onGrant: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Track screen time automatically", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "With usage access, the app records screen time, which apps you spend it in, phone " +
+                    "pickups, and an estimate of when you slept, all without you logging anything. " +
+                    "Android only lets you grant this from its own Settings screen, and it stays " +
+                    "on this device like everything else.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onGrant) { Text("Open Settings") }
+        }
+    }
+}
+
 @Composable
 private fun AutoCollectedCard(metrics: DailyMetricEntity?) {
     Card(colors = CardDefaults.cardColors()) {
@@ -233,7 +275,15 @@ private fun AutoCollectedCard(metrics: DailyMetricEntity?) {
             Text("Collected automatically", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             val rows = buildList {
-                metrics?.sleepMinutes?.let { add("Sleep" to formatMinutes(it)) }
+                metrics?.sleepMinutes?.let {
+                    // Never present an inferred figure as if it were measured.
+                    val label = when (metrics.sleepSource) {
+                        SleepSource.PROXY.name -> "Sleep (estimated)"
+                        SleepSource.MANUAL.name -> "Sleep (you set this)"
+                        else -> "Sleep"
+                    }
+                    add(label to formatMinutes(it))
+                }
                 metrics?.screenMinutes?.let { add("Screen time" to formatMinutes(it)) }
                 metrics?.socialMediaMinutes?.let { add("Social media" to formatMinutes(it)) }
                 metrics?.unlockCount?.let { add("Pickups" to it.toString()) }
@@ -242,8 +292,8 @@ private fun AutoCollectedCard(metrics: DailyMetricEntity?) {
             }
             if (rows.isEmpty()) {
                 Text(
-                    "Nothing yet. Automatic sleep, screen time and activity arrive with the next " +
-                        "phases; until then mood and energy are logged by hand.",
+                    "Nothing yet for today. Screen time and the sleep estimate appear once usage " +
+                        "access is granted and there is a day of events to summarise.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -21,6 +22,8 @@ data class AppSettings(
     val middayReminderHour: Int = 13,
     /** Screen time after this local hour counts as late-night usage. */
     val lateNightHour: Int = 23,
+    /** Packages the user counts as distracting; their time becomes the social-media metric. */
+    val distractingPackages: Set<String> = emptySet(),
 ) {
     val reminderTime: LocalTime get() = LocalTime.of(reminderHour, reminderMinute)
 }
@@ -35,6 +38,7 @@ class SettingsRepository(private val context: Context) {
             middayReminderEnabled = prefs[MIDDAY_ENABLED] ?: false,
             middayReminderHour = prefs[MIDDAY_HOUR] ?: 13,
             lateNightHour = prefs[LATE_NIGHT_HOUR] ?: 23,
+            distractingPackages = prefs[DISTRACTING_PACKAGES] ?: emptySet(),
         )
     }
 
@@ -51,6 +55,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLateNightHour(hour: Int) = edit { it[LATE_NIGHT_HOUR] = hour }
 
+    suspend fun setDistractingPackages(packages: Set<String>) =
+        edit { it[DISTRACTING_PACKAGES] = packages }
+
+    suspend fun toggleDistractingPackage(packageName: String) = edit { prefs ->
+        val current = prefs[DISTRACTING_PACKAGES] ?: emptySet()
+        prefs[DISTRACTING_PACKAGES] =
+            if (packageName in current) current - packageName else current + packageName
+    }
+
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.dataStore.edit(block)
     }
@@ -62,5 +75,6 @@ class SettingsRepository(private val context: Context) {
         val MIDDAY_ENABLED = booleanPreferencesKey("midday_enabled")
         val MIDDAY_HOUR = intPreferencesKey("midday_hour")
         val LATE_NIGHT_HOUR = intPreferencesKey("late_night_hour")
+        val DISTRACTING_PACKAGES = stringSetPreferencesKey("distracting_packages")
     }
 }

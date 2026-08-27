@@ -13,7 +13,35 @@ Build brief: [`mood-energy-tracker-spec.md`](mood-energy-tracker-spec.md).
 | Module | What it is |
 | --- | --- |
 | `insights/` | The analysis engine. Plain Kotlin, **no Android dependencies**, so it can be tested against synthetic data with known structure long before months of real logging exist. |
-| `app/` | Kotlin + Jetpack Compose + Room. Check-in, trends, insights and settings. |
+| `app/` | Kotlin + Jetpack Compose + Room. Check-in, trends, insights and settings, plus screen-time collection and the sleep proxy. |
+
+### Screen time and sleep
+
+`UsageStatsManager` is read in exactly one place (`UsageStatsSource`). Everything that decides what
+the numbers *mean* works on a plain `PhoneEvent` list and is unit-tested, because `UsageEvents.Event`
+cannot be constructed in a test and the aggregation rules are where the mistakes would be.
+
+Choices worth knowing about:
+
+- **Screen time comes from foreground app sessions, not screen-on events.** `SCREEN_INTERACTIVE` is
+  inconsistently reported across manufacturers; resumed/paused pairs are dependable. This
+  undercounts slightly but does so consistently, which is what a correlation needs.
+- **Days end at 04:00.** Scrolling at 01:00 belongs to the night that is ending, so it lands on the
+  same row as the mood rating it relates to.
+- **Pickups prefer unlocks, and fall back to screen-on** where the device has no lock screen, which
+  emits no keyguard events at all.
+- **Sleep is inferred from the absence of interaction**, and only from gaps bounded by real
+  interaction on both sides. A silence that merely runs to the edge of the observation window is not
+  evidence: without that rule, someone who checks their phone at 07:30 and ignores it until noon has
+  that morning reported as sleep.
+- **Nights the event history does not fully cover are skipped, not guessed.** Usage events expire
+  after about a week and cannot be backfilled.
+- **The proxy never overwrites a better source.** A wearable reading or a manual correction outranks
+  it and survives re-aggregation.
+
+Aggregation re-runs a trailing 7-day window on every app open as well as from a daily worker. Since
+events expire, a worker silenced by an aggressive battery manager would otherwise mean permanent
+data loss rather than a delay.
 
 ## Why the engine is a separate, dependency-free module
 
@@ -110,9 +138,9 @@ screen can be checked against the right answer.
 | --- | --- |
 | 1. Manual check-in, trends, reminders, export/delete | Done |
 | 5. Insights engine | Done, calibrated |
-| 3. Screen and phone usage (`UsageStatsManager`) | Next |
-| 4. Off-phone sleep proxy | Next, shares the usage-events plumbing with Phase 3 |
-| 2. Health Connect | After 3 and 4 |
+| 3. Screen and phone usage (`UsageStatsManager`) | Done |
+| 4. Off-phone sleep proxy | Done |
+| 2. Health Connect | Next |
 
 Phases 2 and 3/4 are swapped relative to the spec: with no wearable, Health Connect supplies only
 phone-derived steps, so the phone-inactivity sleep proxy is the only real sleep source.
@@ -124,7 +152,11 @@ phone-derived steps, so the phone-inactivity sleep proxy is the only real sleep 
   to add.
 - **Insights take ~15-20s** for 121 days on an emulator. Fine as a background computation, but it
   needs caching before the dataset grows much.
-- Total screen-on time will be the least reliable metric once Phase 3 lands; it is derived from
-  events that vary across manufacturers.
-- Usage events expire after roughly a week and cannot be backfilled, so aggregation must re-run a
-  trailing window on app open rather than relying on the daily worker alone.
+- **The sleep proxy has not been observed end to end on real events.** Its logic is covered by unit
+  tests, including DST, window clipping and the bounded-gap rule, but an emulator has no multi-day
+  usage history to produce an actual sleep window, so only the screen metrics have been watched
+  through the full path from events to database.
+- Screen time is the least reliable metric, being derived from events that vary across
+  manufacturers.
+- No UI yet for correcting a night the proxy got wrong. `UsageRepository.setManualSleep` exists and
+  is respected by re-aggregation, but nothing calls it.
