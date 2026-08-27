@@ -6,6 +6,7 @@ import dev.sergio.lifeinsights.data.DayBoundary
 import dev.sergio.lifeinsights.data.TrackerRepository
 import dev.sergio.lifeinsights.data.db.CheckInWithTags
 import dev.sergio.lifeinsights.data.db.DailyMetricEntity
+import dev.sergio.lifeinsights.usage.UsageStatsSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -34,7 +35,24 @@ data class TodayState(
     val metrics: DailyMetricEntity? = null,
 )
 
-class CheckInViewModel(private val repository: TrackerRepository) : ViewModel() {
+class CheckInViewModel(
+    private val repository: TrackerRepository,
+    private val usageStatsSource: UsageStatsSource,
+) : ViewModel() {
+
+    private val _usageAccessGranted = MutableStateFlow(usageStatsSource.hasPermission())
+    val usageAccessGranted: StateFlow<Boolean> = _usageAccessGranted.asStateFlow()
+
+    /**
+     * Re-checked whenever the screen resumes: usage access is granted in system Settings, so the
+     * app finds out only by looking again when the user comes back.
+     */
+    fun refreshUsageAccess() {
+        _usageAccessGranted.value = usageStatsSource.hasPermission()
+    }
+
+    fun usageAccessSettingsIntent() = usageStatsSource.permissionSettingsIntent()
+
 
     private val today: LocalDate = DayBoundary.dayOf(Instant.now(), ZoneId.systemDefault())
 

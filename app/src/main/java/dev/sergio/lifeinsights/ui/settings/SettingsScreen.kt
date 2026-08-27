@@ -12,7 +12,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -24,6 +28,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,11 +45,15 @@ import dev.sergio.lifeinsights.data.AppSettings
 import dev.sergio.lifeinsights.data.SettingsRepository
 import dev.sergio.lifeinsights.data.TrackerRepository
 import dev.sergio.lifeinsights.data.export.DataExporter
+import dev.sergio.lifeinsights.usage.InstalledApp
+import dev.sergio.lifeinsights.usage.UsageRepository
+import dev.sergio.lifeinsights.usage.UsageStatsSource
 import dev.sergio.lifeinsights.work.ReminderScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -56,7 +65,58 @@ class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val exporter: DataExporter,
     private val database: dev.sergio.lifeinsights.data.db.AppDatabase,
+    private val usageStatsSource: UsageStatsSource,
+    private val usageRepository: UsageRepository,
 ) : ViewModel() {
+
+    private val _usageAccessGranted = MutableStateFlow(usageStatsSource.hasPermission())
+    val usageAccessGranted: StateFlow<Boolean> = _usageAccessGranted
+
+    private val _installedApps = MutableStateFlow<List<InstalledApp>>(emptyList())
+    val installedApps: StateFlow<List<InstalledApp>> = _installedApps
+
+    fun refreshUsageAccess() {
+        _usageAccessGranted.value = usageStatsSource.hasPermission()
+    }
+
+    fun usageAccessSettingsIntent() = usageStatsSource.permissionSettingsIntent()
+
+    fun loadInstalledApps() {
+        if (_installedApps.value.isNotEmpty()) return
+        viewModelScope.launch {
+            // Enumerating launchable apps hits PackageManager for every entry; keep it off the
+            // main thread.
+            _installedApps.value = withContext(Dispatchers.Default) {
+                usageStatsSource.launchableApps()
+            }
+        }
+    }
+
+    fun toggleDistractingPackage(packageName: String) {
+        viewModelScope.launch {
+            settingsRepository.toggleDistractingPackage(packageName)
+            reaggregate()
+        }
+    }
+
+    /**
+     * Re-runs aggregation after a setting changes, so the numbers reflect the new definition
+     * immediately rather than only from tomorrow.
+     */
+    fun reaggregate() {
+        viewModelScope.launch {
+            val current = settingsRepository.settings.first()
+            val result = usageRepository.aggregateRecent(
+                distractingPackages = current.distractingPackages,
+                lateNightHour = current.lateNightHour,
+            )
+            _message.value = when {
+                result.permissionMissing -> "Usage access is not granted yet."
+                result.daysWritten == 0 -> "No usage events available yet."
+                else -> "Recomputed ${result.daysWritten} days from phone usage."
+            }
+        }
+    }
 
     val settings: StateFlow<AppSettings> = settingsRepository.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
@@ -150,8 +210,18 @@ fun SettingsScreen(viewModel: SettingsViewModel, modifier: Modifier = Modifier) 
     val tags by viewModel.tags.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
 
+    val usageAccessGranted by viewModel.usageAccessGranted.collectAsStateWithLifecycle()
+    val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
+    val distractingCount = settings.distractingPackages.size
+
     var newTag by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var showAppPicker by remember { mutableStateOf(false) }
+
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.refreshUsageAccess()
+        onPauseOrDispose { }
+    }
 
     Column(
         modifier
@@ -225,6 +295,47 @@ fun SettingsScreen(viewModel: SettingsViewModel, modifier: Modifier = Modifier) 
         }
 
         Spacer(Modifier.height(16.dp))
+        SectionCard("Screen time and sleep") {
+            if (usageAccessGranted) {
+                Text(
+                    "Usage access is on. Screen time, phone pickups and a sleep estimate are " +
+                        "recorded automatically.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Sleep here is inferred from time away from the phone, not measured. It will " +
+                        "be wrong on nights you leave the phone in another room or read before " +
+                        "sleeping.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { showAppPicker = true }) {
+                        Text(
+                            if (distractingCount == 0) "Choose distracting apps"
+                            else "Distracting apps ($distractingCount)",
+                        )
+                    }
+                    OutlinedButton(onClick = viewModel::reaggregate) { Text("Recompute") }
+                }
+            } else {
+                Text(
+                    "Not granted. Without it the app cannot see screen time, app usage, pickups or " +
+                        "infer sleep, and only what you log by hand is recorded.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(onClick = {
+                    context.startActivity(viewModel.usageAccessSettingsIntent())
+                }) { Text("Grant usage access") }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
         SectionCard("Your data") {
             Text(
                 "Everything stays on this device. There is no account, no server and no analytics. " +
@@ -280,6 +391,16 @@ fun SettingsScreen(viewModel: SettingsViewModel, modifier: Modifier = Modifier) 
         Spacer(Modifier.height(24.dp))
     }
 
+    if (showAppPicker) {
+        LaunchedEffect(Unit) { viewModel.loadInstalledApps() }
+        AppPickerDialog(
+            apps = installedApps,
+            selected = settings.distractingPackages,
+            onToggle = viewModel::toggleDistractingPackage,
+            onDismiss = { showAppPicker = false },
+        )
+    }
+
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -302,6 +423,59 @@ fun SettingsScreen(viewModel: SettingsViewModel, modifier: Modifier = Modifier) 
             },
         )
     }
+}
+
+/**
+ * Which apps count as "distracting" is a personal judgement, not something the app should guess.
+ * The social-media metric is only as meaningful as this list.
+ */
+@Composable
+private fun AppPickerDialog(
+    apps: List<InstalledApp>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Distracting apps") },
+        text = {
+            Column {
+                Text(
+                    "Time in these apps becomes the social-media metric on the Insights screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                if (apps.isEmpty()) {
+                    Text("Loading apps...", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        modifier = Modifier.heightIn(max = 400.dp),
+                    ) {
+                        items(apps.size) { index ->
+                            val app = apps[index]
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onToggle(app.packageName) }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = app.packageName in selected,
+                                    onCheckedChange = { onToggle(app.packageName) },
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(app.label, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
 }
 
 @Composable
