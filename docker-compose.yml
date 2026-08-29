@@ -1,0 +1,39 @@
+# Runs the sync server and a Postgres for it on one machine.
+#
+#   SYNC_TOKEN=$(openssl rand -base64 32) docker compose up --build
+#
+# The phone then points at http://<this machine>:8080. That address is unencrypted, so it is fine
+# on a home network and not fine over the open internet; put a TLS proxy in front, or deploy to a
+# host that terminates TLS for you.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: insights
+      POSTGRES_PASSWORD: insights
+      POSTGRES_DB: insights
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insights"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      DATABASE_URL: postgres://insights:insights@db:5432/insights
+      # No default. `docker compose up` fails loudly if this is unset, which is the point.
+      SYNC_TOKEN: ${SYNC_TOKEN:?set SYNC_TOKEN, e.g. SYNC_TOKEN=$(openssl rand -base64 32)}
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db-data:

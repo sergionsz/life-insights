@@ -51,12 +51,14 @@ object DebugSeed {
             val at = day.atTime(LocalTime.of(21, 0)).atZone(zone).toInstant()
             val id = checkInDao.insert(
                 CheckInEntity(
+                    uid = java.util.UUID.randomUUID().toString(),
                     timestampUtc = at.toEpochMilli(),
                     zoneId = zone.id,
                     localDate = day.toEpochDay(),
                     mood = clamp(moodRaw),
                     energy = clamp(energyRaw),
                     note = null,
+                    updatedAtUtc = at.toEpochMilli(),
                 ),
             )
             val tags = buildList {
@@ -81,7 +83,10 @@ object DebugSeed {
                     unlockCount = (70 + gaussian(rng) * 20).roundToInt().coerceAtLeast(0),
                     steps = (7000 + gaussian(rng) * 2500).coerceAtLeast(0.0),
                     exerciseMinutes = if ("exercise" in tags) 35 + gaussian(rng) * 12 else 0.0,
-                    updatedAtUtc = System.currentTimeMillis(),
+                    usageUpdatedAtUtc = at.toEpochMilli(),
+                    sleepUpdatedAtUtc = at.toEpochMilli(),
+                    healthUpdatedAtUtc = at.toEpochMilli(),
+                    updatedAtUtc = at.toEpochMilli(),
                 ),
             )
         }

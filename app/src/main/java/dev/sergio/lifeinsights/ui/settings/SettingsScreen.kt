@@ -36,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
@@ -44,11 +46,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.sergio.lifeinsights.data.AppSettings
 import dev.sergio.lifeinsights.data.SettingsRepository
 import dev.sergio.lifeinsights.data.TrackerRepository
+import dev.sergio.lifeinsights.data.db.SyncStateEntity
 import dev.sergio.lifeinsights.data.export.DataExporter
+import dev.sergio.lifeinsights.sync.SyncEngine
+import dev.sergio.lifeinsights.sync.SyncResult
+import dev.sergio.lifeinsights.sync.SyncTarget
 import dev.sergio.lifeinsights.usage.InstalledApp
 import dev.sergio.lifeinsights.usage.UsageRepository
 import dev.sergio.lifeinsights.usage.UsageStatsSource
 import dev.sergio.lifeinsights.work.ReminderScheduler
+import dev.sergio.lifeinsights.work.SyncScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -67,7 +74,59 @@ class SettingsViewModel(
     private val database: dev.sergio.lifeinsights.data.db.AppDatabase,
     private val usageStatsSource: UsageStatsSource,
     private val usageRepository: UsageRepository,
+    private val syncEngine: SyncEngine,
 ) : ViewModel() {
+
+    val syncState: StateFlow<SyncStateEntity?> = syncEngine.observeState()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Local changes not yet accepted by the server. Shown so "synced" is a claim, not a hope. */
+    val pendingCount: StateFlow<Int> = syncEngine.observePendingCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing
+
+    fun setSyncEnabled(context: Context, enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setSyncEnabled(enabled)
+            if (enabled) {
+                SyncScheduler.schedule(context)
+                syncNow()
+            } else {
+                SyncScheduler.cancel(context)
+            }
+        }
+    }
+
+    fun saveSyncServer(url: String, token: String) {
+        viewModelScope.launch {
+            val previous = settingsRepository.settings.first()
+            settingsRepository.setSyncServer(url, token)
+            // Pointing at a different server means its cursor is meaningless here and it has seen
+            // none of this data. Starting over is the only thing that can be right.
+            if (previous.syncServerUrl.trim().trimEnd('/') != url.trim().trimEnd('/')) {
+                syncEngine.resetForNewServer()
+            }
+            _message.value = "Server saved."
+        }
+    }
+
+    fun syncNow() {
+        if (_syncing.value) return
+        viewModelScope.launch {
+            _syncing.value = true
+            val current = settingsRepository.settings.first()
+            val result = syncEngine.syncNow(SyncTarget(current.syncServerUrl, current.syncToken))
+            _syncing.value = false
+            _message.value = when (result) {
+                is SyncResult.NotConfigured -> "Set a server address and token first."
+                is SyncResult.Success ->
+                    "Synced. Sent ${result.pushed}, received ${result.pulled}."
+                is SyncResult.Failure -> result.message
+            }
+        }
+    }
 
     private val _usageAccessGranted = MutableStateFlow(usageStatsSource.hasPermission())
     val usageAccessGranted: StateFlow<Boolean> = _usageAccessGranted
@@ -156,10 +215,22 @@ class SettingsViewModel(
         viewModelScope.launch { repository.removeTag(name) }
     }
 
-    fun deleteEverything() {
+    /**
+     * Wipes this phone and stops syncing.
+     *
+     * Forgetting the server is not optional housekeeping. The deletion is local and leaves no
+     * tombstones, so with the cursor still in place the very next sync would download everything
+     * straight back and the wipe would look like it silently failed.
+     */
+    fun deleteEverything(context: Context) {
         viewModelScope.launch {
             repository.deleteAllData()
-            _message.value = "All check-ins and metrics deleted."
+            syncEngine.forget()
+            settingsRepository.setSyncEnabled(false)
+            SyncScheduler.cancel(context)
+            _message.value =
+                "All check-ins and metrics deleted on this phone. Sync is off; the server still " +
+                    "has its copy."
         }
     }
 
@@ -336,10 +407,20 @@ fun SettingsScreen(viewModel: SettingsViewModel, modifier: Modifier = Modifier) 
         }
 
         Spacer(Modifier.height(16.dp))
+        SyncSection(viewModel, settings)
+
+        Spacer(Modifier.height(16.dp))
         SectionCard("Your data") {
             Text(
-                "Everything stays on this device. There is no account, no server and no analytics. " +
-                    "Nothing is transmitted anywhere unless you share an export yourself.",
+                if (settings.syncEnabled) {
+                    "Your check-ins and daily metrics are copied to the server you configured " +
+                        "above, in readable form. Nothing else leaves the device: no account, " +
+                        "no analytics, no third parties."
+                } else {
+                    "Everything stays on this device. There is no account, no server and no " +
+                        "analytics. Nothing is transmitted anywhere unless you share an export " +
+                        "yourself."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -409,12 +490,14 @@ fun SettingsScreen(viewModel: SettingsViewModel, modifier: Modifier = Modifier) 
                 Text(
                     "Every check-in and every daily metric will be removed from this device. " +
                         "This cannot be undone, and months of history cannot be reconstructed. " +
-                        "Export first if you might want the data later.",
+                        "Export first if you might want the data later.\n\n" +
+                        "Sync will be switched off. The server keeps its copy: this deletes what " +
+                        "is on this phone, not your history everywhere.",
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteEverything()
+                    viewModel.deleteEverything(context)
                     confirmDelete = false
                 }) { Text("Delete") }
             },
@@ -487,4 +570,129 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
             content()
         }
     }
+}
+
+/**
+ * Server sync.
+ *
+ * The status line is the part that matters. "Sync is on" is a setting, not a fact about where the
+ * data actually is, so what is shown instead is when the server last accepted anything and how many
+ * local changes are still waiting. A number that stays above zero is the visible symptom of a
+ * server that is unreachable or refusing the token.
+ */
+@Composable
+private fun SyncSection(viewModel: SettingsViewModel, settings: AppSettings) {
+    val context = LocalContext.current
+    val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val pending by viewModel.pendingCount.collectAsStateWithLifecycle()
+    val syncing by viewModel.syncing.collectAsStateWithLifecycle()
+
+    var url by remember(settings.syncServerUrl) { mutableStateOf(settings.syncServerUrl) }
+    var token by remember(settings.syncToken) { mutableStateOf(settings.syncToken) }
+    var showToken by remember { mutableStateOf(false) }
+
+    SectionCard("Sync") {
+        Text(
+            "Copies your check-ins and daily metrics to a server you run, so a second phone or a " +
+                "reinstall picks up where you left off.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            label = { Text("Server address") },
+            placeholder = { Text("https://insights.example.com") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = token,
+            onValueChange = { token = it },
+            label = { Text("Sync token") },
+            singleLine = true,
+            visualTransformation = if (showToken) {
+                VisualTransformation.None
+            } else {
+                PasswordVisualTransformation()
+            },
+            trailingIcon = {
+                TextButton(onClick = { showToken = !showToken }) {
+                    Text(if (showToken) "Hide" else "Show")
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        // An http address would send the token and every check-in across the network in the clear.
+        // Worth saying plainly rather than refusing, since a local address over a private network
+        // is a legitimate way to run this.
+        if (url.startsWith("http://")) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "This address is not encrypted. Anyone on the network between this phone and the " +
+                    "server can read your data and your token.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = { viewModel.saveSyncServer(url, token) }) { Text("Save") }
+            OutlinedButton(
+                onClick = viewModel::syncNow,
+                enabled = !syncing && settings.syncEnabled,
+            ) { Text(if (syncing) "Syncing..." else "Sync now") }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Sync automatically", style = MaterialTheme.typography.bodyLarge)
+            Switch(
+                checked = settings.syncEnabled,
+                onCheckedChange = { viewModel.setSyncEnabled(context, it) },
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            syncStatusLine(syncState?.lastSyncAtUtc ?: 0, pending),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        syncState?.lastError?.let { error ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+private fun syncStatusLine(lastSyncAtUtc: Long, pending: Int): String {
+    val waiting = when (pending) {
+        0 -> "nothing waiting to upload"
+        1 -> "1 change waiting to upload"
+        else -> "$pending changes waiting to upload"
+    }
+    if (lastSyncAtUtc <= 0L) return "Never synced; $waiting."
+
+    val last = java.time.Instant.ofEpochMilli(lastSyncAtUtc)
+        .atZone(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm"))
+    return "Last synced $last; $waiting."
 }
