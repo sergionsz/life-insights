@@ -1,0 +1,38 @@
+# Caddy fronts the sync server and obtains a Let's Encrypt certificate automatically.
+#
+# For that to work two things must already be true: recuer.de resolves to this machine's public IP,
+# and ports 80 and 443 reach it. Oracle Cloud blocks both in two separate places by default; see
+# deploy/README.md.
+
+{
+	# Where Let's Encrypt sends expiry and problem notices. Optional, but without it a certificate
+	# that stops renewing fails silently.
+	email {$ACME_EMAIL}
+}
+
+{$SYNC_DOMAIN} {
+	encode zstd gzip
+
+	# The phone is the only client, and it speaks JSON to a handful of paths. Anything else that
+	# finds the host gets nothing to work with.
+	handle /v1/sync/* {
+		reverse_proxy server:8080
+	}
+
+	handle /health {
+		reverse_proxy server:8080
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+
+	log {
+		# Paths and statuses only. Request bodies here would be someone's mood and sleep history
+		# written into a log file that outlives any decision to keep it.
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}

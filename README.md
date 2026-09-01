@@ -98,13 +98,20 @@ Decisions worth knowing about:
 
 ### Running the server
 
+Locally, for trying it out:
+
 ```sh
 SYNC_TOKEN=$(openssl rand -base64 32) docker compose up --build
 ```
 
-That address is plain HTTP: fine on a home network, not fine over the internet. Deploy behind TLS,
-or to a host that terminates it for you. The app shows a warning for an `http://` address rather
-than refusing it, since a local server is a legitimate way to run this.
+That is plain HTTP on port 8080: fine on a home network, not fine over the internet. The app warns
+about an `http://` address rather than refusing it, since a local server is a legitimate way to run
+this.
+
+For a real deployment, **[`deploy/README.md`](deploy/README.md)** covers Oracle Cloud end to end:
+Caddy terminating TLS with automatic Let's Encrypt certificates, both of the firewall layers Oracle
+makes you configure separately, and a daily Postgres dump. `deploy/docker-compose.yml` is the
+production stack; the one at the repository root is not.
 
 Configuration is all environment variables:
 
