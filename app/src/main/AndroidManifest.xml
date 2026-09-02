@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+      Only ever used to talk to the sync server the user configures in Settings. Sync is off by
+      default and there is no other network code in the app: no analytics, no crash reporting, no
+      remote config.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
       Usage access is a special permission. It cannot be requested with a runtime dialog; the user
       has to grant it in Settings, and the app detects the result via AppOps. Declaring it here is
       what makes the app appear in that Settings list at all.

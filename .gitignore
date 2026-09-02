@@ -21,3 +21,8 @@ captures/
 keystore.properties
 *.jks
 *.keystore
+
+# Server deployment secrets
+.env
+deploy/.env
+deploy/backups/

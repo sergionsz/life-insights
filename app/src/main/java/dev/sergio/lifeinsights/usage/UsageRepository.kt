@@ -83,45 +83,69 @@ class UsageRepository(
         now: Long,
     ) {
         val existing = dailyMetricDao.find(day.toEpochDay())
+        val base = existing ?: DailyMetricEntity(localDate = day.toEpochDay())
 
         // A wearable reading or a manual correction beats the proxy; never overwrite one.
         val keepExistingSleep = existing?.sleepSource != null &&
             existing.sleepSource != SleepSource.PROXY.name
+        val takeNewSleep = sleep != null && !keepExistingSleep
 
-        val merged = (existing ?: DailyMetricEntity(localDate = day.toEpochDay())).copy(
-            screenMinutes = usage?.screenMinutes ?: existing?.screenMinutes,
-            socialMediaMinutes = usage?.socialMediaMinutes ?: existing?.socialMediaMinutes,
-            lateNightScreenMinutes = usage?.lateNightScreenMinutes
-                ?: existing?.lateNightScreenMinutes,
-            unlockCount = usage?.unlockCount ?: existing?.unlockCount,
-            sleepMinutes = if (keepExistingSleep) existing?.sleepMinutes
-            else sleep?.minutes ?: existing?.sleepMinutes.takeIf { existing?.sleepSource == null },
-            sleepSource = if (keepExistingSleep) existing?.sleepSource
-            else sleep?.let { SleepSource.PROXY.name } ?: existing?.sleepSource,
-            sleepStartUtc = if (keepExistingSleep) existing?.sleepStartUtc
-            else sleep?.startUtc ?: existing?.sleepStartUtc,
-            sleepEndUtc = if (keepExistingSleep) existing?.sleepEndUtc
-            else sleep?.endUtc ?: existing?.sleepEndUtc,
-            updatedAtUtc = now,
+        val merged = base.copy(
+            screenMinutes = usage?.screenMinutes ?: base.screenMinutes,
+            socialMediaMinutes = usage?.socialMediaMinutes ?: base.socialMediaMinutes,
+            lateNightScreenMinutes = usage?.lateNightScreenMinutes ?: base.lateNightScreenMinutes,
+            unlockCount = usage?.unlockCount ?: base.unlockCount,
+            sleepMinutes = if (takeNewSleep) sleep!!.minutes else base.sleepMinutes,
+            sleepSource = if (takeNewSleep) SleepSource.PROXY.name else base.sleepSource,
+            sleepStartUtc = if (takeNewSleep) sleep!!.startUtc else base.sleepStartUtc,
+            sleepEndUtc = if (takeNewSleep) sleep!!.endUtc else base.sleepEndUtc,
         )
-        dailyMetricDao.upsert(merged)
+
+        // Nothing new to record. Writing anyway would be harmless on its own, but it would bump the
+        // timestamps and flag the row for upload, and since this runs on every app open it would
+        // hand the server the same week of unchanged rows several times a day.
+        if (existing != null && merged.sameValuesAs(existing)) return
+
+        dailyMetricDao.upsert(
+            merged.copy(
+                // Each group carries its own timestamp so that sync can merge them independently;
+                // stamping all three here would claim this run produced readings it never saw.
+                usageUpdatedAtUtc = if (usage != null) now else base.usageUpdatedAtUtc,
+                sleepUpdatedAtUtc = if (takeNewSleep) now else base.sleepUpdatedAtUtc,
+                updatedAtUtc = now,
+                dirty = true,
+            ),
+        )
     }
 
     /** A user correction to a night the proxy got wrong. Outranks the proxy permanently. */
     suspend fun setManualSleep(day: LocalDate, startUtc: Long, endUtc: Long) {
         val existing = dailyMetricDao.find(day.toEpochDay())
             ?: DailyMetricEntity(localDate = day.toEpochDay())
+        val now = System.currentTimeMillis()
         dailyMetricDao.upsert(
             existing.copy(
                 sleepMinutes = (endUtc - startUtc) / 60_000.0,
                 sleepSource = SleepSource.MANUAL.name,
                 sleepStartUtc = startUtc,
                 sleepEndUtc = endUtc,
-                updatedAtUtc = System.currentTimeMillis(),
+                sleepUpdatedAtUtc = now,
+                updatedAtUtc = now,
+                dirty = true,
             ),
         )
     }
 }
+
+/**
+ * Compares only the measurements, ignoring the bookkeeping columns.
+ *
+ * Timestamps and the pending flag change on every write by definition, so including them would make
+ * every row look different from itself and defeat the check that uses this.
+ */
+private fun DailyMetricEntity.sameValuesAs(other: DailyMetricEntity): Boolean =
+    copy(usageUpdatedAtUtc = 0, sleepUpdatedAtUtc = 0, healthUpdatedAtUtc = 0, updatedAtUtc = 0, dirty = false) ==
+        other.copy(usageUpdatedAtUtc = 0, sleepUpdatedAtUtc = 0, healthUpdatedAtUtc = 0, updatedAtUtc = 0, dirty = false)
 
 data class AggregationResult(
     val daysWritten: Int,

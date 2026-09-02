@@ -1,8 +1,3 @@
-plugins {
-    alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.kotlin.android) apply false
-    alias(libs.plugins.kotlin.jvm) apply false
-    alias(libs.plugins.kotlin.compose) apply false
-    alias(libs.plugins.kotlin.serialization) apply false
-    alias(libs.plugins.ksp) apply false
-}
+// Plugin versions come from gradle/libs.versions.toml and are applied per module. Nothing is
+// declared here, so a build that excludes the Android modules never has to resolve the Android
+// Gradle plugin at all; see settings.gradle.kts.

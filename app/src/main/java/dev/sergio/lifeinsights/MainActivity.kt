@@ -120,7 +120,7 @@ private fun rememberViewModelFactory(app: LifeInsightsApp): ViewModelProvider.Fa
         initializer {
             SettingsViewModel(
                 app.repository, app.settings, app.exporter, app.database,
-                app.usageStatsSource, app.usageRepository,
+                app.usageStatsSource, app.usageRepository, app.syncEngine,
             )
         }
     }

@@ -1,0 +1,367 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "3abe1bdb53eb79e223d065cba90b2854",
+    "entities": [
+      {
+        "tableName": "check_in",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uid` TEXT NOT NULL DEFAULT '', `timestampUtc` INTEGER NOT NULL, `zoneId` TEXT NOT NULL, `localDate` INTEGER NOT NULL, `mood` INTEGER NOT NULL, `energy` INTEGER NOT NULL, `note` TEXT, `updatedAtUtc` INTEGER NOT NULL DEFAULT 0, `deleted` INTEGER NOT NULL DEFAULT 0, `dirty` INTEGER NOT NULL DEFAULT 1)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "timestampUtc",
+            "columnName": "timestampUtc",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zoneId",
+            "columnName": "zoneId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localDate",
+            "columnName": "localDate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mood",
+            "columnName": "mood",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "energy",
+            "columnName": "energy",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "updatedAtUtc",
+            "columnName": "updatedAtUtc",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "deleted",
+            "columnName": "deleted",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "dirty",
+            "columnName": "dirty",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_check_in_localDate",
+            "unique": false,
+            "columnNames": [
+              "localDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_check_in_localDate` ON `${TABLE_NAME}` (`localDate`)"
+          },
+          {
+            "name": "index_check_in_uid",
+            "unique": true,
+            "columnNames": [
+              "uid"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_check_in_uid` ON `${TABLE_NAME}` (`uid`)"
+          }
+        ]
+      },
+      {
+        "tableName": "check_in_tag",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`checkInId` INTEGER NOT NULL, `tag` TEXT NOT NULL, PRIMARY KEY(`checkInId`, `tag`), FOREIGN KEY(`checkInId`) REFERENCES `check_in`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "checkInId",
+            "columnName": "checkInId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tag",
+            "columnName": "tag",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "checkInId",
+            "tag"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_check_in_tag_tag",
+            "unique": false,
+            "columnNames": [
+              "tag"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_check_in_tag_tag` ON `${TABLE_NAME}` (`tag`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "check_in",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "checkInId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "tag",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`name` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `enabled` INTEGER NOT NULL, `updatedAtUtc` INTEGER NOT NULL DEFAULT 0, `deleted` INTEGER NOT NULL DEFAULT 0, `dirty` INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(`name`))",
+        "fields": [
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtUtc",
+            "columnName": "updatedAtUtc",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "deleted",
+            "columnName": "deleted",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "dirty",
+            "columnName": "dirty",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "name"
+          ]
+        }
+      },
+      {
+        "tableName": "daily_metric",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`localDate` INTEGER NOT NULL, `screenMinutes` REAL, `socialMediaMinutes` REAL, `lateNightScreenMinutes` REAL, `unlockCount` INTEGER, `usageUpdatedAtUtc` INTEGER NOT NULL DEFAULT 0, `sleepMinutes` REAL, `sleepSource` TEXT, `sleepStartUtc` INTEGER, `sleepEndUtc` INTEGER, `sleepUpdatedAtUtc` INTEGER NOT NULL DEFAULT 0, `steps` REAL, `exerciseMinutes` REAL, `restingHeartRate` REAL, `hrv` REAL, `healthUpdatedAtUtc` INTEGER NOT NULL DEFAULT 0, `updatedAtUtc` INTEGER NOT NULL, `dirty` INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(`localDate`))",
+        "fields": [
+          {
+            "fieldPath": "localDate",
+            "columnName": "localDate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "screenMinutes",
+            "columnName": "screenMinutes",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "socialMediaMinutes",
+            "columnName": "socialMediaMinutes",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "lateNightScreenMinutes",
+            "columnName": "lateNightScreenMinutes",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "unlockCount",
+            "columnName": "unlockCount",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "usageUpdatedAtUtc",
+            "columnName": "usageUpdatedAtUtc",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "sleepMinutes",
+            "columnName": "sleepMinutes",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "sleepSource",
+            "columnName": "sleepSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sleepStartUtc",
+            "columnName": "sleepStartUtc",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sleepEndUtc",
+            "columnName": "sleepEndUtc",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sleepUpdatedAtUtc",
+            "columnName": "sleepUpdatedAtUtc",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "exerciseMinutes",
+            "columnName": "exerciseMinutes",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "restingHeartRate",
+            "columnName": "restingHeartRate",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "hrv",
+            "columnName": "hrv",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "healthUpdatedAtUtc",
+            "columnName": "healthUpdatedAtUtc",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "updatedAtUtc",
+            "columnName": "updatedAtUtc",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dirty",
+            "columnName": "dirty",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "localDate"
+          ]
+        }
+      },
+      {
+        "tableName": "sync_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `deviceId` TEXT NOT NULL, `lastSeenSeq` INTEGER NOT NULL, `lastSyncAtUtc` INTEGER NOT NULL, `lastError` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceId",
+            "columnName": "deviceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSeenSeq",
+            "columnName": "lastSeenSeq",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSyncAtUtc",
+            "columnName": "lastSyncAtUtc",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3abe1bdb53eb79e223d065cba90b2854')"
+    ]
+  }
+}

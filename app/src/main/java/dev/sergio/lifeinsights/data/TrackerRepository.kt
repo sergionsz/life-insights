@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.UUID
 
 /** A metric that can be charted and correlated, with the label used in insight copy. */
 data class MetricDefinition(
@@ -46,8 +47,11 @@ class TrackerRepository(
 
     suspend fun ensureDefaultTags() {
         if (tagDao.count() == 0) {
+            val now = System.currentTimeMillis()
             tagDao.upsertAll(
-                AppDatabase.DEFAULT_TAGS.mapIndexed { index, name -> TagEntity(name, index) },
+                AppDatabase.DEFAULT_TAGS.mapIndexed { index, name ->
+                    TagEntity(name, index, updatedAtUtc = now)
+                },
             )
         }
     }
@@ -63,25 +67,50 @@ class TrackerRepository(
     ): Long = checkInDao.save(
         CheckInEntity(
             id = id,
+            // Minted here, once, for a new entry. An edit keeps the identity it already has, which
+            // is why the update path in the DAO touches named columns rather than the whole row.
+            uid = UUID.randomUUID().toString(),
             timestampUtc = at.toEpochMilli(),
             zoneId = zone.id,
             localDate = DayBoundary.dayOf(at, zone).toEpochDay(),
             mood = mood,
             energy = energy,
             note = note?.takeIf { it.isNotBlank() },
+            updatedAtUtc = System.currentTimeMillis(),
         ),
         tags,
     )
 
-    suspend fun deleteCheckIn(id: Long) = checkInDao.delete(id)
+    suspend fun deleteCheckIn(id: Long) =
+        checkInDao.softDelete(id, System.currentTimeMillis())
 
     suspend fun addTag(name: String) {
         val trimmed = name.trim().lowercase()
-        if (trimmed.isNotEmpty()) tagDao.upsert(TagEntity(trimmed, Int.MAX_VALUE))
+        if (trimmed.isEmpty()) return
+        // A tag that was deleted and is being added again keeps its row, so the revival is a change
+        // the other devices can see rather than a resurrection they would undo.
+        val existing = tagDao.find(trimmed)
+        tagDao.upsert(
+            TagEntity(
+                name = trimmed,
+                sortOrder = existing?.sortOrder ?: Int.MAX_VALUE,
+                enabled = true,
+                updatedAtUtc = System.currentTimeMillis(),
+                deleted = false,
+                dirty = true,
+            ),
+        )
     }
 
-    suspend fun removeTag(name: String) = tagDao.delete(name)
+    suspend fun removeTag(name: String) = tagDao.softDelete(name, System.currentTimeMillis())
 
+    /**
+     * Wipes local data.
+     *
+     * This does not tombstone anything, so it does not travel to the server: it is a local reset,
+     * not "delete my history everywhere". The caller is responsible for clearing the sync cursor
+     * alongside it, or the next pull would download everything straight back.
+     */
     suspend fun deleteAllData() {
         checkInDao.deleteAll()
         dailyMetricDao.deleteAll()

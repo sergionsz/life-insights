@@ -3,8 +3,9 @@
 A personal Android app for tracking mood and energy and finding what actually drives them:
 lagged sleep effects, screen use, day-of-week rhythms, and context tags.
 
-All data stays on the device. No account, no server, no analytics, nothing transmitted.
-Patterns are descriptive only; this is not medical or psychological advice.
+Data stays on the device unless you turn on sync and point it at a server you run yourself. There
+is no account, no analytics and no third party in either case. Patterns are descriptive only; this
+is not medical or psychological advice.
 
 Build brief: [`mood-energy-tracker-spec.md`](mood-energy-tracker-spec.md).
 
@@ -13,7 +14,14 @@ Build brief: [`mood-energy-tracker-spec.md`](mood-energy-tracker-spec.md).
 | Module | What it is |
 | --- | --- |
 | `insights/` | The analysis engine. Plain Kotlin, **no Android dependencies**, so it can be tested against synthetic data with known structure long before months of real logging exist. |
+| `sync-model/` | The wire format, the conflict-resolution rules and the server's decision logic. Plain Kotlin, compiled into **both** the phone and the server. |
+| `server/` | Ktor + Postgres. Roughly 300 lines of SQL and routing on top of `sync-model`. Ships as a plain JVM distribution; see `deploy/`. |
 | `app/` | Kotlin + Jetpack Compose + Room. Check-in, trends, insights and settings, plus screen-time collection and the sleep proxy. |
+
+The Android modules are skipped when `LIFE_INSIGHTS_SERVER_ONLY=1` is set, so the server can be
+built somewhere with no Android SDK. It is an explicit switch rather than a check for whether an SDK
+happens to exist, so a developer without one gets a clear error instead of a build that quietly
+leaves the app out.
 
 ### Screen time and sleep
 
@@ -42,6 +50,87 @@ Choices worth knowing about:
 Aggregation re-runs a trailing 7-day window on every app open as well as from a daily worker. Since
 events expire, a worker silenced by an aggressive battery manager would otherwise mean permanent
 data loss rather than a delay.
+
+## Sync
+
+Two-way sync against a server you deploy. Off by default; the address and token are set in Settings.
+
+**The merge rules live in `sync-model` and both ends run the identical code.** The phone runs them
+when applying a pulled row, the server when applying a pushed one. Two implementations of "which
+version wins" would be free to disagree, and when they did, each end would keep its own answer,
+push it, and never converge.
+
+Three properties every rule has to hold:
+
+- **Total.** Any two versions have a winner. Sync runs in the background with nobody to ask.
+- **Commutative.** `merge(a, b) == merge(b, a)`. The two ends see the same pair in opposite orders.
+- **Deterministic on ties.** "Prefer the incoming row" looks reasonable and is the trap: it is not
+  commutative, so the server would keep the phone's version while the phone keeps the server's.
+  Ties fall back to comparing row content, which is arbitrary but identical on both ends.
+
+Decisions worth knowing about:
+
+- **Check-ins carry a UUID, not the Room row id.** An autoincrement id is a per-database counter: a
+  reinstall or a second phone mints the same number for a different entry. Migration 1 to 2
+  backfills one per existing row, in SQL so the whole table is identified inside a single
+  transaction.
+- **Deletes are tombstones.** A removed row syncs as "nothing here", which the other end cannot tell
+  from "you have not seen this yet", so the next pull would resurrect it.
+- **Daily metrics merge per source group, not per row and not per field.** Each of usage, sleep and
+  health carries its own timestamp. Whole-row last-writer-wins would let a phone without usage
+  access erase the screen time another device recorded. Merging all twelve fields independently is
+  worse and less obviously so: with one timestamp per row, a merged row claims `max(a, b)` for
+  values that came from the older side, and that freshly stamped stale value then beats a genuinely
+  newer one, so the answer depends on arrival order. A randomised order-independence test found it
+  immediately.
+- **Sleep is ranked by source before time.** Re-aggregation runs on every app open, so a proxy
+  estimate is almost always the most recent write. Plain last-writer-wins would stomp a correction
+  made by hand days earlier.
+- **The client notices a rebuilt server.** A server restored from scratch restarts its sequence at
+  zero. A phone holding the old cursor would see nothing above it, have nothing pending, and report
+  successful syncs forever while transferring nothing. Comparing against the server's own counter
+  catches it and re-offers everything.
+- **Ordering is the server's sequence, never a timestamp.** Device clocks are not trustworthy
+  enough. Timestamps decide conflicts only.
+- **Writers take an advisory lock.** Postgres assigns sequence numbers at `nextval`, not at commit,
+  so overlapping writers can commit out of order and a client polling in the gap would step over a
+  row permanently.
+
+### Running the server
+
+**[`deploy/README.md`](deploy/README.md)** covers Oracle Cloud end to end: Postgres and Caddy from
+the distribution's packages, the server as a systemd service, backups on a timer, and both of the
+firewall layers Oracle makes you configure separately.
+
+There are no containers. This is one application on a single-purpose VM, where Docker would add a
+layer of indirection for isolation nothing needs, and would put a Gradle build on the smallest
+machine in the system. Instead `deploy/deploy.sh` builds the distribution locally and copies it
+over:
+
+```sh
+deploy/deploy.sh ubuntu@recuer.de
+```
+
+Nothing is compiled on the server. The distribution is plain JVM bytecode, so it does not care that
+it was built on an arm64 laptop, and the instance needs only a JRE.
+
+To exercise the real server locally, `./gradlew :server:test` starts an embedded Postgres and binds
+Netty to a socket, which is a closer test than running a container would be.
+
+Configuration is all environment variables:
+
+| Variable | Notes |
+| --- | --- |
+| `DATABASE_URL` | Either `jdbc:postgresql://...` or the `postgres://user:pass@host/db` form every managed host hands out. The second is converted; the driver rejects it as-is. |
+| `SYNC_TOKEN` | At least 32 characters. **No default:** the server refuses to start without one rather than sitting on a public host serving someone's mood history to anyone who finds it. |
+| `PORT` | Defaults to 8080. |
+
+Deploying somewhere other than Oracle Cloud needs the same three things: a JRE 17 or newer, a
+Postgres, and those variables in the environment. `./gradlew :server:distTar` produces the whole
+server as one tarball. `GET /health` is unauthenticated, for health checks.
+
+The token lives in the app's private DataStore. Other apps cannot read it; a rooted phone or a
+full-device backup could. Rotating it on the server is the remedy.
 
 ## Why the engine is a separate, dependency-free module
 
@@ -88,9 +177,13 @@ Requires JDK 17 and an Android SDK. `local.properties` is machine-specific and n
 create it with `sdk.dir=/path/to/Android/sdk`.
 
 ```sh
-./gradlew :insights:test        # the analysis test suite
+./gradlew test                  # every module: 120 tests
 ./gradlew :app:assembleDebug
+./gradlew :app:connectedAndroidTest   # 16 more (Room migration, sync engine); needs a device
 ```
+
+The server's tests boot a real Postgres (`io.zonky.test:embedded-postgres`), so they need no Docker
+but do download a Postgres binary on the first run.
 
 ### Installing on a phone
 
@@ -141,12 +234,28 @@ screen can be checked against the right answer.
 | 3. Screen and phone usage (`UsageStatsManager`) | Done |
 | 4. Off-phone sleep proxy | Done |
 | 2. Health Connect | Next |
+| Server sync | Done |
 
 Phases 2 and 3/4 are swapped relative to the spec: with no wearable, Health Connect supplies only
 phone-derived steps, so the phone-inactivity sleep proxy is the only real sleep source.
 
 ### Known gaps
 
+- **The deployment has not been run.** The server distribution is built and its launcher verified
+  here, and `ServerBootTest` starts the real thing for real (Netty on a socket, Postgres behind it,
+  requests over HTTP, migrations against a database that has never seen the schema). What no
+  machine has executed is the install itself: the systemd units, the Caddy config and the backup
+  timer are written but unexercised.
+- **The phone has never talked to the server over a real network.** The two ends meet in tests over
+  a mocked transport, running the same `SyncStore` and the same JSON models on both sides, so the
+  wire format and the merge rules do agree. What is untested is everything a real connection adds:
+  TLS, a proxy, a captive portal, a flaky mobile signal mid-push.
+- **The sync settings screen has not been used on a device.** The engine below it is tested; the
+  wiring from the switch and the two text fields is not.
+- **Deleting all data is local only.** It clears the sync cursor and turns sync off, because
+  otherwise the next pull would download everything straight back. The server keeps its copy, so
+  this deletes what is on the phone rather than your history everywhere. There is no "delete from
+  the server too" yet.
 - **Tags are only tested same-day.** A planted "alcohol lowers *next-day* energy" effect is
   correctly not reported, because lagged tag analysis does not exist yet. That is the first thing
   to add.

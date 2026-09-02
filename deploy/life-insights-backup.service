@@ -1,0 +1,13 @@
+# /etc/systemd/system/life-insights-backup.service
+
+[Unit]
+Description=Dump the Life Insights database
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# The postgres superuser reaches the database over the local socket with peer authentication, so
+# the backup needs no password of its own anywhere on disk.
+User=postgres
+ExecStart=/usr/local/bin/life-insights-backup
