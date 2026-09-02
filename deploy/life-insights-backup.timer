@@ -1,0 +1,14 @@
+# /etc/systemd/system/life-insights-backup.timer
+
+[Unit]
+Description=Daily Life Insights database dump
+
+[Timer]
+OnCalendar=daily
+# Runs on the next boot if the machine was off when it was due, which a free-tier VM occasionally
+# is after maintenance.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

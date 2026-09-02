@@ -1,0 +1,49 @@
+# /etc/systemd/system/life-insights.service
+
+[Unit]
+Description=Life Insights sync server
+Documentation=https://github.com/sergionsz/life-insights
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=lifeinsights
+Group=lifeinsights
+
+# Holds SYNC_TOKEN and the database password. Root-owned and mode 600: systemd reads it before
+# dropping privileges, so the service user never needs access to the file itself.
+EnvironmentFile=/etc/life-insights/env
+ExecStart=/opt/life-insights/bin/server
+
+# on-failure, not always. A missing or malformed SYNC_TOKEN makes the server log why and exit
+# cleanly, and restarting on that would spin forever without fixing anything. The consequence is
+# that a misconfigured service shows as "inactive (dead)" rather than "failed"; the reason is in
+# the journal either way.
+Restart=on-failure
+RestartSec=5
+
+# Sandboxing. Most of what a container would have given us, without the container.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+UMask=0077
+
+# Deliberately NOT set: MemoryDenyWriteExecute. The JIT compiler writes machine code and then
+# executes it, so denying that stops the JVM from starting at all.
+
+[Install]
+WantedBy=multi-user.target

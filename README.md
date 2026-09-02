@@ -15,13 +15,13 @@ Build brief: [`mood-energy-tracker-spec.md`](mood-energy-tracker-spec.md).
 | --- | --- |
 | `insights/` | The analysis engine. Plain Kotlin, **no Android dependencies**, so it can be tested against synthetic data with known structure long before months of real logging exist. |
 | `sync-model/` | The wire format, the conflict-resolution rules and the server's decision logic. Plain Kotlin, compiled into **both** the phone and the server. |
-| `server/` | Ktor + Postgres. Roughly 300 lines of SQL and routing on top of `sync-model`. |
+| `server/` | Ktor + Postgres. Roughly 300 lines of SQL and routing on top of `sync-model`. Ships as a plain JVM distribution; see `deploy/`. |
 | `app/` | Kotlin + Jetpack Compose + Room. Check-in, trends, insights and settings, plus screen-time collection and the sleep proxy. |
 
 The Android modules are skipped when `LIFE_INSIGHTS_SERVER_ONLY=1` is set, so the server can be
-built in a container with no Android SDK. It is an explicit switch rather than a check for whether
-an SDK happens to exist, so a developer without one gets a clear error instead of a build that
-quietly leaves the app out.
+built somewhere with no Android SDK. It is an explicit switch rather than a check for whether an SDK
+happens to exist, so a developer without one gets a clear error instead of a build that quietly
+leaves the app out.
 
 ### Screen time and sleep
 
@@ -98,20 +98,24 @@ Decisions worth knowing about:
 
 ### Running the server
 
-Locally, for trying it out:
+**[`deploy/README.md`](deploy/README.md)** covers Oracle Cloud end to end: Postgres and Caddy from
+the distribution's packages, the server as a systemd service, backups on a timer, and both of the
+firewall layers Oracle makes you configure separately.
+
+There are no containers. This is one application on a single-purpose VM, where Docker would add a
+layer of indirection for isolation nothing needs, and would put a Gradle build on the smallest
+machine in the system. Instead `deploy/deploy.sh` builds the distribution locally and copies it
+over:
 
 ```sh
-SYNC_TOKEN=$(openssl rand -base64 32) docker compose up --build
+deploy/deploy.sh ubuntu@recuer.de
 ```
 
-That is plain HTTP on port 8080: fine on a home network, not fine over the internet. The app warns
-about an `http://` address rather than refusing it, since a local server is a legitimate way to run
-this.
+Nothing is compiled on the server. The distribution is plain JVM bytecode, so it does not care that
+it was built on an arm64 laptop, and the instance needs only a JRE.
 
-For a real deployment, **[`deploy/README.md`](deploy/README.md)** covers Oracle Cloud end to end:
-Caddy terminating TLS with automatic Let's Encrypt certificates, both of the firewall layers Oracle
-makes you configure separately, and a daily Postgres dump. `deploy/docker-compose.yml` is the
-production stack; the one at the repository root is not.
+To exercise the real server locally, `./gradlew :server:test` starts an embedded Postgres and binds
+Netty to a socket, which is a closer test than running a container would be.
 
 Configuration is all environment variables:
 
