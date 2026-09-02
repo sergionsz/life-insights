@@ -125,8 +125,9 @@ Configuration is all environment variables:
 | `SYNC_TOKEN` | At least 32 characters. **No default:** the server refuses to start without one rather than sitting on a public host serving someone's mood history to anyone who finds it. |
 | `PORT` | Defaults to 8080. |
 
-Deploying elsewhere is `docker build -f server/Dockerfile .` from the repository root, plus a
-Postgres and those two variables. `GET /health` is unauthenticated for platform health checks.
+Deploying somewhere other than Oracle Cloud needs the same three things: a JRE 17 or newer, a
+Postgres, and those variables in the environment. `./gradlew :server:distTar` produces the whole
+server as one tarball. `GET /health` is unauthenticated, for health checks.
 
 The token lives in the app's private DataStore. Other apps cannot read it; a rooted phone or a
 full-device backup could. Rotating it on the server is the remedy.
@@ -240,10 +241,11 @@ phone-derived steps, so the phone-inactivity sleep proxy is the only real sleep 
 
 ### Known gaps
 
-- **The container has never been built.** There was no Docker on the machine this was written on,
-  so `server/Dockerfile` and `docker-compose.yml` are the one part of the deploy path nothing has
-  executed. The server itself does start for real in `ServerBootTest`: Netty on a socket, Postgres
-  behind it, requests over HTTP, migrations against a database that has never seen the schema.
+- **The deployment has not been run.** The server distribution is built and its launcher verified
+  here, and `ServerBootTest` starts the real thing for real (Netty on a socket, Postgres behind it,
+  requests over HTTP, migrations against a database that has never seen the schema). What no
+  machine has executed is the install itself: the systemd units, the Caddy config and the backup
+  timer are written but unexercised.
 - **The phone has never talked to the server over a real network.** The two ends meet in tests over
   a mocked transport, running the same `SyncStore` and the same JSON models on both sides, so the
   wire format and the merge rules do agree. What is untested is everything a real connection adds:
